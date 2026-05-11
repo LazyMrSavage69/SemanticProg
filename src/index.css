@@ -1,0 +1,103 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #050810;
+  --surface: #0d1117;
+  --border: #1e2a3a;
+  --text: #c9d8f0;
+  --muted: #4a6080;
+
+  --variable: #00d4ff;
+  --loop: #7c3aed;
+  --condition: #f59e0b;
+  --function: #10b981;
+  --recursion: #ef4444;
+  --expression: #64748b;
+  --particle: #ffffff;
+
+  color-scheme: dark;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  color: var(--text);
+  background: var(--bg);
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* Subtle scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #1e2a3a; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #2a3a4f; }
+
+/* Monaco override - keep dark background flush */
+.monaco-editor, .monaco-editor-background, .monaco-editor .margin {
+  background-color: var(--surface) !important;
+}
+
+/* Execution playback highlight */
+.sspe-execution-line {
+  background: linear-gradient(90deg, rgba(245, 158, 11, 0.18) 0%, rgba(245, 158, 11, 0.04) 100%);
+  border-left: 2px solid var(--condition);
+  box-shadow: inset 0 0 16px rgba(245, 158, 11, 0.08);
+}
+.sspe-execution-gutter {
+  background: var(--condition);
+  width: 3px !important;
+  margin-left: 3px;
+  box-shadow: 0 0 8px var(--condition);
+}
+
+/* Node-selected line marker */
+.sspe-selected-line {
+  background: rgba(0, 212, 255, 0.08);
+  border-left: 2px solid var(--variable);
+}
+.sspe-selected-gutter {
+  background: var(--variable);
+  width: 2px !important;
+  margin-left: 4px;
+}
+
+/* Animated breathing glow for the loading orb */
+@keyframes sspe-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(0.95); }
+  50% { opacity: 1; transform: scale(1.05); }
+}
+.sspe-loading-orb {
+  animation: sspe-pulse 1.4s ease-in-out infinite;
+}
+
+/* Indeterminate progress shimmer */
+@keyframes sspe-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(220%); }
+}
+.sspe-shimmer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 40%;
+  background: linear-gradient(90deg, transparent, rgba(16, 185, 129, 0.45), transparent);
+  animation: sspe-shimmer 1.4s ease-in-out infinite;
+}
