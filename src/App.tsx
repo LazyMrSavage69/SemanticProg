@@ -4,6 +4,7 @@ import { ControlPanel } from './components/ui/ControlPanel'
 import { InfoPanel } from './components/ui/InfoPanel'
 import { LegendSidebar } from './components/ui/LegendSidebar'
 import { LoadingScreen } from './components/ui/LoadingScreen'
+import { MiniMap } from './components/ui/MiniMap'
 import { SSPEScene } from './components/scene/SSPEScene'
 import { useSSPEStore } from './store/useSSPEStore'
 
@@ -67,6 +68,7 @@ function App() {
 
           <InfoPanel />
           <LegendSidebar />
+          <MiniMap />
 
           <LoadingScreen
             visible={!pyodideReady}

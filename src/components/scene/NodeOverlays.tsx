@@ -1,45 +1,98 @@
-import { useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import * as THREE from 'three'
 import { useFrame } from '@react-three/fiber'
-import { Billboard, Html, RoundedBox, Sparkles, Text } from '@react-three/drei'
-import type { SemanticNode } from '../../parser/types'
+import { Billboard, Html, Sparkles, Text } from '@react-three/drei'
+import type { SemanticGraph, SemanticNode } from '../../parser/types'
 import { useSSPEStore } from '../../store/useSSPEStore'
 import { NODE_COLORS } from './constants'
+import { sceneRuntime } from './sceneRuntime'
 
-interface NodeMeshProps {
+/**
+ * Renders the "expensive" per-node overlays (labels, sparkles, point lights,
+ * iteration badges, condition test text, hover tooltips) — but only for the
+ * small set of nodes that genuinely need them right now.
+ *
+ * That set ("detail set") lives in `sceneRuntime.detailNodeIds` and is
+ * maintained by `SemanticZoomController`. It is bounded by
+ * `MAX_DETAIL_NODES`, so this component never renders more than a handful
+ * of overlay nodes regardless of total graph size.
+ *
+ * We diff the detail set inside a `useFrame` and only call `setState` when
+ * it changes — so navigation jitter doesn't cascade into React renders.
+ */
+
+interface NodeOverlaysProps {
+  graph: SemanticGraph | null
+}
+
+export function NodeOverlays({ graph }: NodeOverlaysProps) {
+  const nodesById = useMemo(() => {
+    const m = new Map<string, SemanticNode>()
+    if (graph) for (const n of graph.nodes) m.set(n.id, n)
+    return m
+  }, [graph])
+
+  const [overlayIds, setOverlayIds] = useState<string[]>([])
+  const lastSigRef = useRef('')
+
+  useFrame(() => {
+    // Build a stable signature of the detail set and only React-sync on change.
+    let sig = ''
+    let first = true
+    for (const id of sceneRuntime.detailNodeIds) {
+      sig += first ? id : `,${id}`
+      first = false
+    }
+    if (sig === lastSigRef.current) return
+    lastSigRef.current = sig
+
+    if (sig === '') {
+      if (overlayIds.length > 0) setOverlayIds([])
+      return
+    }
+    // Convert to sorted array so render order is stable.
+    const ids = sig.split(',').sort()
+    setOverlayIds(ids)
+  })
+
+  return (
+    <group>
+      {overlayIds.map((id) => {
+        const node = nodesById.get(id)
+        if (!node) return null
+        return <NodeOverlay key={node.id} node={node} />
+      })}
+    </group>
+  )
+}
+
+interface NodeOverlayProps {
   node: SemanticNode
 }
 
-export function NodeMesh({ node }: NodeMeshProps) {
-  const groupRef = useRef<THREE.Group>(null)
-  const materialRef = useRef<THREE.MeshStandardMaterial>(null)
+function NodeOverlay({ node }: NodeOverlayProps) {
   const lightRef = useRef<THREE.PointLight>(null)
-  const innerRef = useRef<THREE.Mesh>(null)
   const opacityRef = useRef(1)
 
-  const setSelectedNode = useSSPEStore((s) => s.setSelectedNode)
-  const setHoveredNode = useSSPEStore((s) => s.setHoveredNode)
   const selectedNodeId = useSSPEStore((s) => s.selectedNodeId)
   const hoveredNodeId = useSSPEStore((s) => s.hoveredNodeId)
-  const activeNodeIds = useSSPEStore((s) => s.activeNodeIds)
   const focusedNodeId = useSSPEStore((s) => s.focusedNodeId)
   const focusedRelatedIds = useSSPEStore((s) => s.focusedRelatedIds)
+  const activeNodeIds = useSSPEStore((s) => s.activeNodeIds)
   const variableValues = useSSPEStore((s) => s.variableValues)
   const variableValueIndex = useSSPEStore((s) => s.variableValueIndex)
 
   const color = NODE_COLORS[node.type]
+  const colorObj = useMemo(() => new THREE.Color(color), [color])
+
   const isActive = activeNodeIds.includes(node.id)
   const isSelected = selectedNodeId === node.id
   const isHovered = hoveredNodeId === node.id
-
-  // Focus mode: when something is focused, fade unrelated nodes.
   const focusActive = focusedNodeId !== null
   const isRelated = !focusActive || focusedRelatedIds[node.id] === true
   const targetOpacity = isRelated ? 1 : 0.18
 
-  const colorObj = useMemo(() => new THREE.Color(color), [color])
-
-  // Compute the live value to display under variables.
+  // Live variable value display (carry-over from the original NodeMesh).
   const variableValue: string | null = useMemo(() => {
     if (node.type !== 'variable') return null
     const list = variableValues[node.label]
@@ -54,85 +107,51 @@ export function NodeMesh({ node }: NodeMeshProps) {
     return null
   }, [node, variableValues, variableValueIndex])
 
-  // Iteration count for loops.
-  const iterationCount = node.type === 'loop' && typeof node.metadata.iterations === 'number'
-    ? node.metadata.iterations
-    : null
+  const iterationCount =
+    node.type === 'loop' && typeof node.metadata.iterations === 'number'
+      ? node.metadata.iterations
+      : null
 
-  // Condition test text (e.g., "n <= 1") for the diamond label.
-  const conditionTest = node.type === 'condition' && typeof node.metadata.test === 'string'
-    ? node.metadata.test
-    : null
+  const conditionTest =
+    node.type === 'condition' && typeof node.metadata.test === 'string'
+      ? node.metadata.test
+      : null
 
   useFrame((_, delta) => {
-    // Animated emissive — pulse when active.
-    if (materialRef.current) {
-      const targetEmissive = isActive ? 1.6 : isSelected ? 1.1 : isHovered ? 0.85 : 0.4
-      materialRef.current.emissiveIntensity = THREE.MathUtils.damp(
-        materialRef.current.emissiveIntensity,
-        targetEmissive,
-        8,
-        delta,
-      )
-      materialRef.current.opacity = THREE.MathUtils.damp(
-        materialRef.current.opacity,
-        targetOpacity,
+    if (lightRef.current) {
+      const target = isActive ? 2 : 0
+      lightRef.current.intensity = THREE.MathUtils.damp(
+        lightRef.current.intensity,
+        target,
         6,
         delta,
       )
-      materialRef.current.transparent = targetOpacity < 0.999
-    }
-    if (lightRef.current) {
-      const targetIntensity = isActive ? 2 : 0
-      lightRef.current.intensity = THREE.MathUtils.damp(lightRef.current.intensity, targetIntensity, 6, delta)
-    }
-    if (groupRef.current) {
-      // Loops slowly rotate; recursion gently bobs.
-      if (node.type === 'loop') groupRef.current.rotation.z += delta * 0.5
-      if (node.type === 'recursion') {
-        groupRef.current.rotation.y += delta * 0.4
-        if (innerRef.current) innerRef.current.rotation.x -= delta * 0.9
-      }
     }
     opacityRef.current = THREE.MathUtils.damp(opacityRef.current, targetOpacity, 6, delta)
   })
 
-  const handlePointerOver = (e: { stopPropagation: () => void }) => {
-    e.stopPropagation()
-    setHoveredNode(node.id)
-    document.body.style.cursor = 'pointer'
-  }
-  const handlePointerOut = (e: { stopPropagation: () => void }) => {
-    e.stopPropagation()
-    if (hoveredNodeId === node.id) setHoveredNode(null)
-    document.body.style.cursor = 'default'
-  }
-  const handleClick = (e: { stopPropagation: () => void }) => {
-    e.stopPropagation()
-    setSelectedNode(node.id)
-  }
-  const handleContextMenu = (e: { stopPropagation: () => void; nativeEvent?: Event }) => {
-    e.stopPropagation()
-    e.nativeEvent?.preventDefault?.()
-    setSelectedNode(node.id)
-  }
+  // Skip rendering text-heavy overlays at very-low zoom (LOD).
+  // Detail set still contains the node (for selected/hovered/active), but at
+  // zoom 0 we collapse to a single bold label per overlay.
+  const [zoomTier, setZoomTier] = useState(2)
+  useEffect(() => {
+    const id = window.setInterval(() => {
+      setZoomTier(sceneRuntime.zoomLevel)
+    }, 200) // 5Hz sample — overlays don't need sub-frame precision
+    return () => window.clearInterval(id)
+  }, [])
 
-  const interactionProps = {
-    onPointerOver: handlePointerOver,
-    onPointerOut: handlePointerOut,
-    onClick: handleClick,
-    onContextMenu: handleContextMenu,
-  }
+  const showRichLabels = zoomTier >= 2
+  const showSparkles = isRelated && (isActive || isSelected || isHovered) && zoomTier >= 2
+  const showTooltip = isHovered && zoomTier >= 2
 
   return (
-    <group ref={groupRef} position={node.position}>
+    <group position={node.position}>
       <pointLight ref={lightRef} color={color} intensity={0} distance={8} decay={2} />
 
-      {renderShape(node.type, materialRef, color, innerRef, interactionProps)}
-
-      {isRelated && (
+      {showSparkles && (
         <Sparkles
-          count={node.type === 'function' || node.type === 'recursion' ? 18 : 8}
+          count={node.type === 'function' || node.type === 'recursion' ? 14 : 6}
           scale={2.2}
           size={2}
           speed={0.4}
@@ -141,8 +160,7 @@ export function NodeMesh({ node }: NodeMeshProps) {
         />
       )}
 
-      {/* Loop iteration badge — clearly communicates "this runs N times" */}
-      {iterationCount !== null && (
+      {iterationCount !== null && showRichLabels && (
         <Billboard position={[0.95, 0.95, 0]}>
           <mesh>
             <circleGeometry args={[0.32, 24]} />
@@ -165,8 +183,7 @@ export function NodeMesh({ node }: NodeMeshProps) {
         </Billboard>
       )}
 
-      {/* Condition test text under the diamond */}
-      {conditionTest && (
+      {conditionTest && showRichLabels && (
         <Billboard position={[0, -1.05, 0]}>
           <Text
             fontSize={0.18}
@@ -175,14 +192,12 @@ export function NodeMesh({ node }: NodeMeshProps) {
             anchorY="top"
             outlineColor="#050810"
             outlineWidth={0.012}
-            font={undefined}
           >
             {conditionTest}
           </Text>
         </Billboard>
       )}
 
-      {/* Variable label + live value */}
       <Billboard position={[0, 1.1, 0]}>
         <Text
           fontSize={node.type === 'variable' ? 0.26 : 0.28}
@@ -210,7 +225,7 @@ export function NodeMesh({ node }: NodeMeshProps) {
         )}
       </Billboard>
 
-      {(isSelected || isHovered) && node.type !== 'variable' && (
+      {(isSelected || isHovered) && node.type !== 'variable' && showRichLabels && (
         <Billboard position={[0, -1.1, 0]}>
           <Text
             fontSize={0.18}
@@ -225,8 +240,7 @@ export function NodeMesh({ node }: NodeMeshProps) {
         </Billboard>
       )}
 
-      {/* Plain-language hover tooltip */}
-      {isHovered && (
+      {showTooltip && (
         <Html
           position={[0, -1.6, 0]}
           center
@@ -249,106 +263,6 @@ export function NodeMesh({ node }: NodeMeshProps) {
       )}
     </group>
   )
-}
-
-type InteractionProps = {
-  onPointerOver: (e: { stopPropagation: () => void }) => void
-  onPointerOut: (e: { stopPropagation: () => void }) => void
-  onClick: (e: { stopPropagation: () => void }) => void
-  onContextMenu: (e: { stopPropagation: () => void; nativeEvent?: Event }) => void
-}
-
-function renderShape(
-  type: SemanticNode['type'],
-  matRef: React.RefObject<THREE.MeshStandardMaterial | null>,
-  color: string,
-  innerRef: React.RefObject<THREE.Mesh | null>,
-  interaction: InteractionProps,
-) {
-  const sharedMaterial = (
-    <meshStandardMaterial
-      ref={matRef}
-      color={color}
-      emissive={color}
-      emissiveIntensity={0.4}
-      metalness={0.4}
-      roughness={0.3}
-      toneMapped={false}
-      transparent
-      opacity={1}
-    />
-  )
-
-  switch (type) {
-    case 'variable':
-    case 'assignment':
-      return (
-        <group {...interaction}>
-          <RoundedBox args={[0.8, 0.8, 0.8]} radius={0.12} smoothness={3}>
-            {sharedMaterial}
-          </RoundedBox>
-          <mesh>
-            <boxGeometry args={[0.82, 0.82, 0.82]} />
-            <meshBasicMaterial color={color} wireframe transparent opacity={0.35} toneMapped={false} />
-          </mesh>
-        </group>
-      )
-    case 'loop':
-      return (
-        <mesh {...interaction} rotation={[Math.PI / 2, 0, 0]}>
-          <torusGeometry args={[1.2, 0.15, 16, 64]} />
-          {sharedMaterial}
-        </mesh>
-      )
-    case 'condition':
-      // Flat flowchart-style diamond plate (rotated square on its corner).
-      return (
-        <group {...interaction}>
-          <mesh rotation={[0, 0, Math.PI / 4]}>
-            <boxGeometry args={[1.25, 1.25, 0.28]} />
-            {sharedMaterial}
-          </mesh>
-          <mesh rotation={[0, 0, Math.PI / 4]}>
-            <boxGeometry args={[1.3, 1.3, 0.3]} />
-            <meshBasicMaterial color={color} wireframe transparent opacity={0.4} toneMapped={false} />
-          </mesh>
-        </group>
-      )
-    case 'function':
-      return (
-        <mesh {...interaction}>
-          <cylinderGeometry args={[0.6, 0.8, 1.0, 6]} />
-          {sharedMaterial}
-        </mesh>
-      )
-    case 'recursion':
-      return (
-        <group {...interaction}>
-          <mesh>
-            <icosahedronGeometry args={[0.8, 0]} />
-            {sharedMaterial}
-          </mesh>
-          <mesh ref={innerRef} scale={0.5}>
-            <icosahedronGeometry args={[0.8, 0]} />
-            <meshStandardMaterial
-              color={color}
-              emissive={color}
-              emissiveIntensity={0.9}
-              wireframe
-              toneMapped={false}
-            />
-          </mesh>
-        </group>
-      )
-    case 'expression':
-    default:
-      return (
-        <mesh {...interaction}>
-          <sphereGeometry args={[0.4, 24, 24]} />
-          {sharedMaterial}
-        </mesh>
-      )
-  }
 }
 
 function plainTitle(node: SemanticNode): string {
@@ -387,7 +301,9 @@ function plainExplanation(node: SemanticNode): string {
     case 'condition': {
       const test = typeof meta.test === 'string' ? `(${meta.test})` : ''
       const hasElse = meta.hasElse === true
-      return `A decision diamond. It checks ${test || 'a condition'} and goes YES if true${hasElse ? ', or NO otherwise' : ''}${lineNote}.`
+      return `A decision diamond. It checks ${test || 'a condition'} and goes YES if true${
+        hasElse ? ', or NO otherwise' : ''
+      }${lineNote}.`
     }
     case 'variable':
     case 'assignment': {
